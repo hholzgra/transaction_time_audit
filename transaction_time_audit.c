@@ -47,40 +47,25 @@
 
 #endif
 
-/* upcoming MariaDB feature */
-#ifndef PLUGIN_VAR_HIDDEN
-#define PLUGIN_VAR_HIDDEN 0
-#endif
-
-/* There's no real support for per-connection plugin 
-   variables yet besides exposing them to SQL as 
-   server variables.
-
-	 For now we have to live with that and expose 
-	 things in SHOW VARIABLES. PLUGIN_VAR_HIDDEN will
-   at leat work around of that. 
-
-	 A cleaner approach may come with 
-	 https://mariadb.atlassian.net/browse/MDEV-6712
-*/
-
-static MYSQL_THDVAR_ULONGLONG(session_data,
-															PLUGIN_VAR_READONLY | PLUGIN_VAR_NOCMDOPT | PLUGIN_VAR_HIDDEN,
-															"private structure pointer",
+/* log long running transactions that took more than this many seconds */
+static MYSQL_THDVAR_ULONGLONG(limit,
+															PLUGIN_VAR_RQCMDARG,
+															"log transactions that took longer than this many seconds",
 															/* check */ NULL,
 															/* update */ NULL,
-															/* default*/ 0,
+															/* default*/ 10,
 															/* min */ 0,
 															/* max */ ULLONG_MAX,
 															/* blocksize */ 1
 															);
 
-/* we also expose transaction start time, but this is intentional
-	 (although it would make more sense as a STATUS variable) */
+/* this is an internal per-connection structure only,
+ so NOCMDOPT and NOSYSVAR hide it in --help and 
+ SHOW VARIABLES output */
 
-static MYSQL_THDVAR_ULONGLONG(trans_start_time,
-															PLUGIN_VAR_READONLY | PLUGIN_VAR_NOCMDOPT | PLUGIN_VAR_HIDDEN,
-															"transaction start time",
+static MYSQL_THDVAR_ULONGLONG(session_data,
+															PLUGIN_VAR_READONLY | PLUGIN_VAR_NOCMDOPT | PLUGIN_VAR_NOSYSVAR,
+															"private structure pointer",
 															/* check */ NULL,
 															/* update */ NULL,
 															/* default*/ 0,
@@ -91,8 +76,8 @@ static MYSQL_THDVAR_ULONGLONG(trans_start_time,
 
 /* register session variables declared above */
 static struct st_mysql_sys_var* audit_plugin_sysvars[] = {
+	MYSQL_SYSVAR(limit),
  	MYSQL_SYSVAR(session_data),
-	MYSQL_SYSVAR(trans_start_time),
 	NULL
 };
 
@@ -100,20 +85,38 @@ static struct st_mysql_sys_var* audit_plugin_sysvars[] = {
 struct my_vars {
 	MYSQL_XID xid;
 	char *user;
+	time_t start_time;
 };
 
-/* SHOW_FUNC callback function that returns time since session start */
+/* SHOW_FUNC callback function that returns time the transaction started */
+static int show_transaction_start(MYSQL_THD thd,
+                                      struct st_mysql_show_var* var,
+                                      char *buff)
+{
+	unsigned long long *result = (unsigned long long *)buff;
+	struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
+
+	var->type  = SHOW_LONGLONG;
+	var->value = buff;
+	
+	*result = (unsigned long long)(session_vars->start_time);
+
+	return 0;
+}
+
+/* SHOW_FUNC callback function that returns time elapsed since session start */
 static int show_transaction_time(MYSQL_THD thd,
                                       struct st_mysql_show_var* var,
                                       char *buff)
 {
 	unsigned long long *result = (unsigned long long *)buff;
+	struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
 
 	var->type  = SHOW_LONGLONG;
 	var->value = buff;
 	
-	if (THDVAR(thd, trans_start_time)) {
-		*result = time(NULL) - THDVAR(thd, trans_start_time);
+	if (session_vars->start_time) {
+		*result = time(NULL) - session_vars->start_time;
 	} else {
 		*result = 0;
 	}
@@ -124,6 +127,7 @@ static int show_transaction_time(MYSQL_THD thd,
 /* register SHOW STATUS variables and callbacks */
 static struct st_mysql_show_var audit_plugin_statvars[]=
 	{
+		{"transaction_time_start", (char *)&show_transaction_start, SHOW_FUNC},
 		{"transaction_time_span", (char *)&show_transaction_time, SHOW_FUNC},
 		{NULL, NULL, SHOW_UNDEF}
 	};
@@ -143,10 +147,11 @@ static void begin_transaction(MYSQL_THD thd, const struct mysql_event_general *e
 	if (session_vars) {
 	  session_vars->user = (char *)calloc(1, event->general_user_length + 1);
 	  memcpy(session_vars->user, event->general_user, event->general_user_length);
-	}
+	  session_vars->start_time = event->general_time;
 
-	/* remember transaction start time */
-	THDVAR(thd, trans_start_time) = event->general_time;
+		/* remember transaction start time */
+		session_vars->start_time = event->general_time;
+	}
 }
 
 /* called whenever we detect that a transaction ended */
@@ -156,12 +161,14 @@ static void end_transaction(MYSQL_THD thd)
 
 	// simple logging 
 	if (session_vars && session_vars->user) {
-	  fprintf(stderr, "transaction ended, user: %s, time taken: %Lu\n", 
-						session_vars->user, time(NULL) - THDVAR(thd, trans_start_time));
+		unsigned long long time_taken = (unsigned long long)(time(NULL) - session_vars->start_time);
+		if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
+			fprintf(stderr, "transaction ended, user: %s, time taken: %Lu\n", 
+								session_vars->user, time_taken);
+		}
+		session_vars->start_time = 0;
 	}
 
-	// reset start time
-	THDVAR(thd, trans_start_time) = 0;
 }
 
 /* the actual audit notify callback */
@@ -183,18 +190,21 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
 			case MYSQL_AUDIT_CONNECTION_CONNECT:	
 				THDVAR(thd, session_data) = (unsigned long long)calloc(sizeof(struct my_vars), 1); 
 				if (THDVAR(thd, session_data)) {
-					((struct my_vars *)THDVAR(thd, session_data))->xid.formatID = -1;
+					struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
+					session_vars->xid.formatID = -1;
+					session_vars->start_time = 0;
 				}
-				THDVAR(thd, trans_start_time) = 0;
 				break;
 
 				// connection ended: clean up
 			case MYSQL_AUDIT_CONNECTION_DISCONNECT:
 				end_transaction(thd);
 				if (THDVAR(thd, session_data)) {
-					struct my_vars *m = (struct my_vars *)THDVAR(thd, session_data);
-					free(m->user);
-					free(m);
+					struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
+					if (session_vars->user) {
+						free(session_vars->user);
+					}
+					free(session_vars);
 				}
 				break;
 			}
@@ -242,7 +252,7 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
 
 				// remember current transaction id
 				memcpy(old_xid, &xid, sizeof(MYSQL_XID));
-			}
+			} 
 		}
 		break;
 	}
