@@ -18,7 +18,7 @@
   |   51 Franklin Street, Fifth Floor,                                   |
   |   Boston, MA  02110-1301  USA                                        |
   +----------------------------------------------------------------------+
-  | Authors: Hartmut Holzgraefe <hartmut@skysql.com>                     |
+  | Authors: Hartmut Holzgraefe <hartmut@mariadb.com>                    |
   +----------------------------------------------------------------------+
 */
 
