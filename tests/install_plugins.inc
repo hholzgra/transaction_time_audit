@@ -1,4 +1,4 @@
 -- disable_warnings
-INSTALL PLUGIN `audit` SONAME 'audit.so';
+INSTALL PLUGIN `transaction_time_audit` SONAME 'transaction_time_audit.so';
 
 -- enable_warnings

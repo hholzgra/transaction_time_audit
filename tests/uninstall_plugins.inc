@@ -1,3 +1,3 @@
 FLUSH TABLES;
-UNINSTALL PLUGIN `audit`;
+UNINSTALL PLUGIN `transaction_time_audit`;
 
