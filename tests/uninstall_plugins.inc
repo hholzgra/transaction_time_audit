@@ -1,0 +1,3 @@
+FLUSH TABLES;
+UNINSTALL PLUGIN `audit`;
+

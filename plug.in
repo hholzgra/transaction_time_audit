@@ -1,0 +1,3 @@
+MYSQL_PLUGIN(audit, [audit], [The unknown extension], [max])
+MYSQL_PLUGIN_STATIC(audit, [libaudit.la])
+MYSQL_PLUGIN_DYNAMIC(audit, [audit.la])

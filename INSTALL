@@ -1,0 +1,52 @@
+This is a MySQL plugin library generetad using CodeGen_Mysql_Plugin 0.9.3dev
+To build the library configure it with:
+
+    ./configure --with-mysql-src=... [--libdir=...]
+    make
+    sudo make install
+
+You need to specify where to find the MySQL source for the server
+you are running, this plugin library depends on server internals
+not found in the public header files.
+
+With --libdir=... you can specify your MySQL servers plugin_dir path.
+As this is a runtime configuration setting in the server the configure
+script is not reliably able to detect where it is so you should set
+it manually.
+
+If there is no 'configure' file yet you may need to generate it using
+
+  autoreconf -i
+
+
+To register the actual plugins within this library 
+execute the following SQL statements:
+
+    INSTALL PLUGIN `audit` SONAME 'audit.so';
+
+To unregister the plugins execute
+
+    FLUSH TABLES;   /* to make sure plugins are no longer referenced */
+    UNINSTALL PLUGIN `audit`;
+
+
+To test the plugin before installing it you need to make sure that the
+following binaries and scripts are available via your $PATH:
+
+ * mysql
+ * mysql_install_db
+ * mysqladmin 
+ * mysqltest
+ * mysqld
+
+If you are using a binary tarball distribution or installed from source
+yourself without changing the install prefix you can arrange for that 
+using:
+
+    PATH=/usr/local/mysql/bin:/usr/local/mysql/libexec:$PATH
+    export PATH
+
+You can then test the plugin using a simple
+
+    make test
+
