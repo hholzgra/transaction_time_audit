@@ -1,18 +1,18 @@
 ACLOCAL_AMFLAGS = -I m4
-pkglib_LTLIBRARIES = audit.la
 
-audit_la_SOURCES = audit.c
+pkglib_LTLIBRARIES = transaction_time_audit.la
 
-noinst_HEADERS = myplugin_audit.h
+transaction_time_audit_la_SOURCES = transaction_time_audit.c
+
+noinst_HEADERS = transaction_time_audit.h
 
 
-audit_la_CFLAGS = @MYSQL_CFLAGS@ -I/usr/include/mysql/private
-audit_la_CXXFLAGS = @MYSQL_CXXFLAGS@ -I/usr/include/mysql/private
-audit_la_LDFLAGS = -module -avoid-version
+transaction_time_audit_la_CFLAGS = @MYSQL_CFLAGS@ -I/usr/include/mysql/private
+transaction_time_audit_la_CXXFLAGS = @MYSQL_CXXFLAGS@ -I/usr/include/mysql/private
+transaction_time_audit_la_LDFLAGS = -module -avoid-version
 
 test: all
 	cd tests; . test.sh
-
 
 pdf: manual.pdf
 

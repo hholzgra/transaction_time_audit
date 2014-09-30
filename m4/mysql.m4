@@ -71,8 +71,6 @@ AC_DEFUN([WITH_MYSQL], [
       MYSQL_CONFIG_INCLUDE=`$MYSQL_CONFIG --include`
       MYSQL_CONFIG_LIBS_R=`$MYSQL_CONFIG --libs_r`
 
-      MYSQL_CLIENT=`dirname $MYSQL_CONFIG`/mysql
-
       AC_MSG_RESULT($MYSQL_CONFIG)
     fi
   fi
