@@ -14,7 +14,8 @@ As this is a runtime configuration setting in the server the configure
 script is not reliably able to detect where it is so you should set
 it manually.
 
-If there is no 'configure' file yet you may need to generate it using
+If there is no 'configure' file yet, e.g. after a fresh "git clone",
+you may need to generate it using
 
   autoreconf -i
 
