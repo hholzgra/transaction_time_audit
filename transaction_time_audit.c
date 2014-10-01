@@ -47,6 +47,9 @@
 
 #endif
 
+#define SESSION_VAR(THD, VAR) (((struct my_vars *)THDVAR(THD, session_data))->VAR)
+
+
 /* log long running transactions that took more than this many seconds */
 static MYSQL_THDVAR_ULONGLONG(limit,
                               PLUGIN_VAR_RQCMDARG,
@@ -94,12 +97,11 @@ static int show_transaction_start(MYSQL_THD thd,
                                       char *buff)
 {
   unsigned long long *result = (unsigned long long *)buff;
-  struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
 
   var->type  = SHOW_LONGLONG;
   var->value = buff;
   
-  *result = (unsigned long long)(session_vars->start_time);
+  *result = (unsigned long long)SESSION_VAR(thd, start_time);
 
   return 0;
 }
@@ -110,13 +112,12 @@ static int show_transaction_time(MYSQL_THD thd,
                                       char *buff)
 {
   unsigned long long *result = (unsigned long long *)buff;
-  struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
 
   var->type  = SHOW_LONGLONG;
   var->value = buff;
   
-  if (session_vars->start_time) {
-    *result = time(NULL) - session_vars->start_time;
+  if (SESSION_VAR(thd, start_time)) {
+    *result = (unsigned long long)(time(NULL) - SESSION_VAR(thd, start_time));
   } else {
     *result = 0;
   }
@@ -139,34 +140,36 @@ static struct st_mysql_show_var audit_plugin_statvars[]=
  */
 static void begin_transaction(MYSQL_THD thd, const struct mysql_event_general *event)
 {
-  struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
-
   /* populate session vars, 
      right now only 'user' is stored, 
      xid is initialized to zero by calloc already ... */
-  if (session_vars) {
-    session_vars->user = (char *)calloc(1, event->general_user_length + 1);
-    memcpy(session_vars->user, event->general_user, event->general_user_length);
-    session_vars->start_time = event->general_time;
+  if (THDVAR(thd, session_data)) {
+    SESSION_VAR(thd, user) = (char *)calloc(1, event->general_user_length + 1);
+    memcpy(SESSION_VAR(thd, user), event->general_user, event->general_user_length);
 
     /* remember transaction start time */
-    session_vars->start_time = event->general_time;
+    SESSION_VAR(thd, start_time) = event->general_time;
   }
 }
 
 /* called whenever we detect that a transaction ended */
 static void end_transaction(MYSQL_THD thd) 
 {
-  struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
+	/* TODO
+	   * timestamp
+     * query counter?
+     * track first, last queries?
+		 * retrieve connection annotations?
+		 */
 
-  // simple logging 
-  if (session_vars && session_vars->user) {
-    unsigned long long time_taken = (unsigned long long)(time(NULL) - session_vars->start_time);
+	/* simple logging */
+  if (THDVAR(thd, session_data) && SESSION_VAR(thd, user)) {
+    unsigned long time_taken = (unsigned long)(time(NULL) - SESSION_VAR(thd, start_time));
     if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
-      fprintf(stderr, "transaction ended, user: %s, time taken: %Lu\n", 
-                session_vars->user, time_taken);
+      fprintf(stderr, "transaction ended, user: %s, time taken: %lu\n", 
+                SESSION_VAR(thd, user), time_taken);
     }
-    session_vars->start_time = 0;
+    SESSION_VAR(thd, start_time) = 0;
   }
 
 }
@@ -190,9 +193,8 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
       case MYSQL_AUDIT_CONNECTION_CONNECT:  
         THDVAR(thd, session_data) = (unsigned long long)calloc(sizeof(struct my_vars), 1); 
         if (THDVAR(thd, session_data)) {
-          struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
-          session_vars->xid.formatID = -1;
-          session_vars->start_time = 0;
+          SESSION_VAR(thd, xid).formatID = -1;
+          SESSION_VAR(thd, start_time) = 0;
         }
         break;
 
@@ -200,11 +202,10 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
       case MYSQL_AUDIT_CONNECTION_DISCONNECT:
         end_transaction(thd);
         if (THDVAR(thd, session_data)) {
-          struct my_vars *session_vars = (struct my_vars *)THDVAR(thd, session_data);
-          if (session_vars->user) {
-            free(session_vars->user);
+          if (SESSION_VAR(thd, user)) {
+            free(SESSION_VAR(thd, user));
           }
-          free(session_vars);
+          free((void *)THDVAR(thd, session_data));
         }
         break;
       }
@@ -226,7 +227,7 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
       if (THDVAR(thd, session_data)) {
         // get current and previous transaction IDs
         thd_get_xid(thd, &xid);
-        old_xid = &((struct my_vars *)THDVAR(thd, session_data))->xid;
+        old_xid = &SESSION_VAR(thd, xid);
 
         // a transaction is valid if its formatID is >= 0
 
