@@ -14,12 +14,12 @@ transaction_time_audit_la_LDFLAGS = -module -avoid-version
 test: all
 	cd tests; . test.sh
 
-pdf: manual.pdf
+pdf-local: manual.pdf
 
 manual.pdf: manual.xml
 	docbook2pdf manual.xml
 
-html: manual.html
+html-local: manual.html
 
 manual.html: manual.xml
 	docbook2html -u manual.xml
