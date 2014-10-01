@@ -22,7 +22,12 @@
   +----------------------------------------------------------------------+
 */
 
-/* $ Id: $ */ 
+
+/* TODO
+ * query counter?
+ * track first, last queries?
+ * retrieve connection annotations?
+ */
 
 
 #ifdef HAVE_CONFIG_H
@@ -43,12 +48,7 @@
 
 #include <mysql/services.h>
 
-#ifndef MYSQL_SERVICE_MY_PLUGIN_LOG_INCLUDED
-
-#endif
-
 #define SESSION_VAR(THD, VAR) (((struct my_vars *)THDVAR(THD, session_data))->VAR)
-
 
 /* log long running transactions that took more than this many seconds */
 static MYSQL_THDVAR_ULONGLONG(limit,
@@ -155,18 +155,15 @@ static void begin_transaction(MYSQL_THD thd, const struct mysql_event_general *e
 /* called whenever we detect that a transaction ended */
 static void end_transaction(MYSQL_THD thd) 
 {
-	/* TODO
-	   * timestamp
-     * query counter?
-     * track first, last queries?
-		 * retrieve connection annotations?
-		 */
-
 	/* simple logging */
   if (THDVAR(thd, session_data) && SESSION_VAR(thd, user)) {
-    unsigned long time_taken = (unsigned long)(time(NULL) - SESSION_VAR(thd, start_time));
-    if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
-      fprintf(stderr, "transaction ended, user: %s, time taken: %lu\n", 
+		time_t t = time(NULL);
+		struct tm lt = *localtime(&t);
+    unsigned long time_taken = (unsigned long)(time(NULL) - SESSION_VAR(thd, start_time)); 
+
+   if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
+      fprintf(stderr, "%2.2d%2.2d%2.2d %2.2d:%2.2d:%2.2d [note] long transaction: user: '%s', time taken: %lu\n", 
+							lt.tm_year % 100, lt.tm_mon, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec,
                 SESSION_VAR(thd, user), time_taken);
     }
     SESSION_VAR(thd, start_time) = 0;
