@@ -84,11 +84,15 @@ static struct st_mysql_sys_var* audit_plugin_sysvars[] = {
   NULL
 };
 
+#define MAX_QUERIES 5
+
 /* private session data structure */
 struct my_vars {
-  MYSQL_XID xid;
-  char *user;
-  time_t start_time;
+  MYSQL_XID xid;      /* previous events XID */
+  char *user;         /* session user */
+  time_t start_time;  /* start time of current transaction */
+	unsigned long long query_counter; /* simple query counter counting MYSQL_AUDIT_GENERAL_LOG events */
+	char **queries;
 };
 
 /* SHOW_FUNC callback function that returns time the transaction started */
@@ -96,13 +100,16 @@ static int show_transaction_start(MYSQL_THD thd,
                                       struct st_mysql_show_var* var,
                                       char *buff)
 {
-  unsigned long long *result = (unsigned long long *)buff;
+	time_t t = (time_t)SESSION_VAR(thd, start_time);
+	struct tm lt = *localtime(&t);
 
-  var->type  = SHOW_LONGLONG;
+	sprintf(buff, "%4d-%02d-%02d %02d:%02d:%02d", 
+					lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+					lt.tm_hour, lt.tm_min, lt.tm_sec);
+
+  var->type  = SHOW_CHAR;
   var->value = buff;
-  
-  *result = (unsigned long long)SESSION_VAR(thd, start_time);
-
+	
   return 0;
 }
 
@@ -125,11 +132,27 @@ static int show_transaction_time(MYSQL_THD thd,
   return 0;
 }
 
+/* SHOW_FUNC callback function that returns queries counted */
+static int show_transaction_query_count(MYSQL_THD thd,
+                                      struct st_mysql_show_var* var,
+                                      char *buff)
+{
+  unsigned long long *result = (unsigned long long *)buff;
+
+  var->type  = SHOW_LONGLONG;
+  var->value = buff;
+	
+	*result = SESSION_VAR(thd, query_counter);
+
+  return 0;
+}
+
 /* register SHOW STATUS variables and callbacks */
 static struct st_mysql_show_var audit_plugin_statvars[]=
   {
     {"transaction_time_start", (char *)&show_transaction_start, SHOW_FUNC},
     {"transaction_time_span", (char *)&show_transaction_time, SHOW_FUNC},
+    {"transaction_time_query_count", (char *)&show_transaction_query_count, SHOW_FUNC},
     {NULL, NULL, SHOW_UNDEF}
   };
 
@@ -149,6 +172,11 @@ static void begin_transaction(MYSQL_THD thd, const struct mysql_event_general *e
 
     /* remember transaction start time */
     SESSION_VAR(thd, start_time) = event->general_time;
+
+		SESSION_VAR(thd, query_counter) = 1;
+
+		*SESSION_VAR(thd, queries) = (char *)calloc(1, event->general_query_length +1);
+		memcpy(*SESSION_VAR(thd, queries), event->general_query, event->general_query_length);
   }
 }
 
@@ -161,12 +189,30 @@ static void end_transaction(MYSQL_THD thd)
 		struct tm lt = *localtime(&t);
     unsigned long time_taken = (unsigned long)(time(NULL) - SESSION_VAR(thd, start_time)); 
 
-   if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
-      fprintf(stderr, "%2.2d%2.2d%2.2d %2.2d:%2.2d:%2.2d [note] long transaction: user: '%s', time taken: %lu\n", 
+    if ((THDVAR(thd, limit)) && (time_taken >= THDVAR(thd, limit))) {
+			int i, first = MAX_QUERIES / 2;
+			char **queries = SESSION_VAR(thd, queries);
+
+			fprintf(stderr, "%2.2d%2.2d%2.2d %2.2d:%2.2d:%2.2d [note] long transaction: user: '%s', time taken: %lu, queries: %lu\n", 
 							lt.tm_year % 100, lt.tm_mon, lt.tm_mday, lt.tm_hour, lt.tm_min, lt.tm_sec,
-                SESSION_VAR(thd, user), time_taken);
-    }
-    SESSION_VAR(thd, start_time) = 0;
+							SESSION_VAR(thd, user), time_taken, (unsigned long)SESSION_VAR(thd, query_counter));
+			
+			for (i = 0; i < MAX_QUERIES; i++) {
+				if (queries[i]) {
+					if ((i == first) && (SESSION_VAR(thd, query_counter) > MAX_QUERIES)) {
+						fprintf(stderr, "[... %d more queries ...]\n", (int)(SESSION_VAR(thd, query_counter) - MAX_QUERIES));
+					}
+					
+					fprintf(stderr, "  %-80s\n", queries[i]);
+					
+					free(queries[i]);
+					queries[i] = NULL;
+				}
+			}
+		}
+
+		SESSION_VAR(thd, start_time) = 0;
+		SESSION_VAR(thd, query_counter) = 0;
   }
 
 }
@@ -192,6 +238,8 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
         if (THDVAR(thd, session_data)) {
           SESSION_VAR(thd, xid).formatID = -1;
           SESSION_VAR(thd, start_time) = 0;
+					SESSION_VAR(thd, query_counter) = 0;
+					SESSION_VAR(thd, queries) = (char **)calloc(MAX_QUERIES, sizeof(char *));
         }
         break;
 
@@ -199,9 +247,20 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
       case MYSQL_AUDIT_CONNECTION_DISCONNECT:
         end_transaction(thd);
         if (THDVAR(thd, session_data)) {
+					int i;
+					char **queries = SESSION_VAR(thd, queries);
+
           if (SESSION_VAR(thd, user)) {
             free(SESSION_VAR(thd, user));
           }
+					
+					for (i = 0; i < MAX_QUERIES; i++) {
+						if (queries[i]) {
+							free(queries[i]);
+						}
+					}
+
+					free(queries);
           free((void *)THDVAR(thd, session_data));
         }
         break;
@@ -250,8 +309,36 @@ static void audit_notify(MYSQL_THD thd, unsigned int event_class, const void *ev
 
         // remember current transaction id
         memcpy(old_xid, &xid, sizeof(MYSQL_XID));
-      } 
-    }
+
+				// simple query counter
+				if ((event_general->event_subclass == MYSQL_AUDIT_GENERAL_LOG) 
+						&& !strncmp(event_general->general_command, "Query", event_general->general_command_length)
+						&& SESSION_VAR(thd, start_time)) {
+					int i;
+					char **queries = SESSION_VAR(thd, queries);
+					char *query;
+
+					i = SESSION_VAR(thd, query_counter)++;
+
+					query = (char*)calloc(event_general->general_query_length + 1, 1);
+					memcpy(query, event_general->general_query, event_general->general_query_length);
+
+					
+					if ( i < MAX_QUERIES) {
+						queries[i] = query;
+ 					} else {
+						int j, first = MAX_QUERIES / 2;
+						
+						free(queries[first]);
+						for (j = first; j < MAX_QUERIES - 1; j++) {
+							queries[j] = queries[j + 1];
+						}
+						queries[MAX_QUERIES - 1] = query;
+					}
+				}
+			}
+		} 
+
     break;
   }
 
