@@ -23,12 +23,12 @@ you may need to generate it using
 To register the actual plugins within this library 
 execute the following SQL statements:
 
-    INSTALL PLUGIN `transaction_time_audit` SONAME 'transaction_time_audit.so';
+    INSTALL PLUGIN `transaction_time` SONAME 'transaction_time_audit.so';
 
 To unregister the plugins execute
 
     FLUSH TABLES;   /* to make sure plugins are no longer referenced */
-    UNINSTALL PLUGIN `transaction_time_audit`;
+    UNINSTALL PLUGIN `transaction_time`;
 
 
 To test the plugin before installing it you need to make sure that the
