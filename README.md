@@ -19,6 +19,14 @@ transaction_time_limit
 Log long running transaction to error log if it took more
 than this many seconds (default=10s, disabled if set to 0s)
 
+transaction_time_max_queries
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Number of queries to remember and put into log messages.
+If there are more queries in a transaction about half of
+the first and last queries each will be logged while 
+queries in the middle of the transaction will be discarded.
+
 STATUS values
 -------------
 
@@ -38,4 +46,9 @@ transaction_time_span
 
 Time in seconds since the transaction started or 0 if not in
 an active transaction.
+
+transaction_time_query_count
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Number of queries executed since transaction start.
 
